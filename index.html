@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Memoria PWA</title>
+    <title>Memoria Creator</title>
     
     <meta name="theme-color" content="#4f46e5">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -35,13 +35,12 @@
         video::-webkit-media-controls { display:none !important; }
         .no-click-video { pointer-events: none; }
         
-        /* Blur class customizada para o modal */
         .glass { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
     </style>
 
     <script>
         const manifest = {
-            "name": "Memoria App",
+            "name": "Memoria Creator",
             "short_name": "Memoria",
             "start_url": ".",
             "display": "standalone",
@@ -70,9 +69,9 @@
             oled:    { id: 'oled', name: 'OLED Black', bg: 'bg-black', accent: 'text-white', btn: 'bg-zinc-800', gradient: 'from-black to-zinc-900' }
         };
 
-        // --- DATABASE (IndexedDB) ---
-        const DB_NAME = "MemoriaAppDB_V6"; 
-        const STORE_NAME = "media_store";
+        // --- DATABASE (Updated Store Name for Clean State) ---
+        const DB_NAME = "MemoriaAppDB_V7"; 
+        const STORE_NAME = "final_movies"; // Mudamos para deixar claro que só salva filmes
 
         const initDB = () => {
             return new Promise((resolve, reject) => {
@@ -86,7 +85,8 @@
             });
         };
 
-        const saveToDB = async (file, userEmail) => {
+        // Salva o RESULTADO FINAL
+        const saveMovieToDB = async (blob, userEmail) => {
             try {
                 const db = await initDB();
                 return new Promise((resolve, reject) => {
@@ -94,9 +94,8 @@
                     const item = {
                         id: Date.now() + Math.random().toString(),
                         userEmail: userEmail,
-                        type: file.type,
-                        blob: file,
-                        name: file.name,
+                        type: 'video/webm',
+                        blob: blob,
                         timestamp: Date.now()
                     };
                     tx.objectStore(STORE_NAME).add(item);
@@ -106,7 +105,7 @@
             } catch (e) { return false; }
         };
 
-        const getAllFromDB = async (userEmail) => {
+        const getMoviesFromDB = async (userEmail) => {
             try {
                 const db = await initDB();
                 return new Promise((resolve) => {
@@ -122,7 +121,7 @@
             } catch (e) { return []; }
         };
         
-        const deleteFromDB = async (id) => {
+        const deleteMovieFromDB = async (id) => {
             const db = await initDB();
             return new Promise((resolve) => {
                 const tx = db.transaction([STORE_NAME], "readwrite");
@@ -131,27 +130,20 @@
             });
         }
 
-        // --- ADVANCED VIDEO RENDERER (Com Áudio e Performance) ---
+        // --- RENDERER (Mesmo motor otimizado) ---
         const exportVideo = async (items, onProgress, onComplete) => {
             const canvas = document.createElement('canvas');
-            // Mantendo HD Vertical, mas otimizado
             canvas.width = 720; 
             canvas.height = 1280; 
             const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
             
-            // --- AUDIO SETUP ---
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const audioDest = audioCtx.createMediaStreamDestination();
+            const canvasStream = canvas.captureStream(30);
             
-            // Stream do Canvas
-            const canvasStream = canvas.captureStream(30); // 30 FPS fixos
-            
-            // Misturar Audio no Stream Final
             if (audioDest.stream.getAudioTracks().length > 0) {
                  canvasStream.addTrack(audioDest.stream.getAudioTracks()[0]);
             }
-            // Precisamos adicionar a track manualmente depois quando tivermos audio, ou conectar nodes.
-            // Estratégia: O MediaRecorder grava o que vem no stream. Vamos adicionar a track de audio do destination.
             
             const combinedStream = new MediaStream([
                 ...canvasStream.getVideoTracks(),
@@ -161,15 +153,13 @@
             let mimeType = 'video/webm; codecs=vp9';
             if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
 
-            // Bitrate de 3Mbps é suficiente e mais leve que 4Mbps
             const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 3000000 }); 
             const chunks = [];
             recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
             recorder.onstop = () => onComplete(new Blob(chunks, { type: mimeType }));
             recorder.start();
 
-            // Configurações
-            const TRANSITION_FRAMES = 10; // Transição mais rápida
+            const TRANSITION_FRAMES = 10;
             
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
@@ -186,14 +176,13 @@
                     img.src = item.url;
                     await new Promise(r => img.onload = r);
                     asset = img;
-                    durationFrames = 90; // 3 segundos
+                    durationFrames = 90; 
                     isVideo = false;
                 } else {
                     const vid = document.createElement('video');
                     vid.src = item.url;
                     vid.crossOrigin = "anonymous";
                     vid.playsInline = true;
-                    // IMPORTANTE: Volume 1.0 mas não conectado ao destino padrão (speakers)
                     vid.volume = 1.0; 
                     
                     await new Promise(resolve => {
@@ -206,41 +195,32 @@
                     durationFrames = Math.ceil(vid.duration * 30);
                     isVideo = true;
 
-                    // Conectar Áudio do Vídeo ao Recorder
                     try {
                         audioSource = audioCtx.createMediaElementSource(vid);
                         audioSource.connect(audioDest);
-                    } catch(e) { console.log("Erro audio context", e); }
+                    } catch(e) {}
 
                     try { await vid.play(); } catch(e){}
                 }
 
-                // Loop de Frames
                 for (let f = 0; f < durationFrames; f++) {
-                    // --- PERFORMANCE HACK: Fundo Estático Escuro ---
-                    // Em vez de usar filter: blur(), desenhamos a imagem esticada e escurecemos.
-                    // Isso é MUITO mais rápido.
-                    
                     ctx.save();
-                    
                     let w = isVideo ? asset.videoWidth : asset.width;
                     let h = isVideo ? asset.videoHeight : asset.height;
 
                     if (w > 0 && h > 0) {
-                        // 1. Fundo (Cover)
+                        // Background Blur Fake
                         const scaleCover = Math.max(canvas.width / w, canvas.height / h);
                         const wCover = w * scaleCover;
                         const hCover = h * scaleCover;
                         const xCover = (canvas.width - wCover) / 2;
                         const yCover = (canvas.height - hCover) / 2;
-                        
                         ctx.drawImage(asset, xCover, yCover, wCover, hCover);
                         
-                        // 2. Camada Escura (Simula Blur/Foco)
                         ctx.fillStyle = 'rgba(0,0,0,0.7)';
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                        // 3. Imagem Principal (Contain)
+                        // Main Image
                         const scaleContain = Math.min(canvas.width / w, canvas.height / h);
                         const wFinal = w * scaleContain;
                         const hFinal = h * scaleContain;
@@ -254,28 +234,25 @@
                         ctx.fillStyle = '#000';
                         ctx.fillRect(0,0, canvas.width, canvas.height);
                     }
-
                     ctx.restore();
 
-                    // Crossfade Simples
                     if (f < TRANSITION_FRAMES && i > 0) {
                         ctx.fillStyle = `rgba(0,0,0,${1 - (f/TRANSITION_FRAMES)})`;
                         ctx.fillRect(0,0,canvas.width, canvas.height);
                     }
 
-                    // Aguardar frame (33ms = ~30fps)
                     await new Promise(r => setTimeout(r, 33));
                 }
                 
                 if(isVideo) {
-                    if(audioSource) audioSource.disconnect(); // Limpar áudio
+                    if(audioSource) audioSource.disconnect();
                     asset.pause();
                     asset.remove();
                 }
             }
 
             recorder.stop();
-            audioCtx.close(); // Fechar contexto de áudio
+            audioCtx.close(); 
             onProgress(100);
         };
 
@@ -286,7 +263,8 @@
             return <i data-lucide={name} width={size} height={size} className={className}></i>;
         };
 
-        const PreviewModal = ({ blob, onClose, onSave }) => {
+        // Modal para Visualizar e Salvar o Resultado da Criação
+        const CreationPreviewModal = ({ blob, onClose, onSaveToApp, onDownload }) => {
             const url = useMemo(() => URL.createObjectURL(blob), [blob]);
 
             return (
@@ -299,20 +277,39 @@
                             className="max-h-full max-w-full w-full h-auto object-contain"
                          />
                     </div>
-                    <div className="p-6 bg-slate-900 border-t border-white/10 flex gap-4 justify-between items-center safe-area-bottom">
-                        <button 
-                            onClick={onClose}
-                            className="flex-1 py-4 rounded-xl font-bold text-white/70 hover:bg-white/10 transition-colors"
-                        >
-                            Descartar
+                    <div className="p-6 bg-slate-900 border-t border-white/10 flex flex-col gap-3 safe-area-bottom">
+                        <div className="flex gap-3">
+                            <button onClick={onSaveToApp} className="flex-1 py-4 bg-indigo-600 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                                <Icon name="save" size={20} />
+                                Salvar na Galeria
+                            </button>
+                            <button onClick={onDownload} className="flex-1 py-4 bg-slate-700 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                                <Icon name="download" size={20} />
+                                Baixar
+                            </button>
+                        </div>
+                        <button onClick={onClose} className="py-3 text-white/50 text-sm font-medium">Descartar Filme</button>
+                    </div>
+                </div>
+            );
+        };
+
+        // Modal para Apenas Assistir filmes salvos
+        const MoviePlayerModal = ({ movie, onClose }) => {
+            return (
+                <div className="fixed inset-0 z-50 bg-black flex flex-col animate-fade-in">
+                    <div className="absolute top-4 right-4 z-50">
+                        <button onClick={onClose} className="bg-black/50 p-2 rounded-full text-white backdrop-blur">
+                            <Icon name="x" size={24} />
                         </button>
-                        <button 
-                            onClick={onSave}
-                            className="flex-[2] py-4 bg-indigo-600 rounded-xl font-bold text-white shadow-lg shadow-indigo-900/50 flex items-center justify-center gap-2 active:scale-95 transition-transform"
-                        >
-                            <Icon name="download" size={20} />
-                            Salvar na Galeria
-                        </button>
+                    </div>
+                    <div className="flex-1 flex items-center justify-center bg-black">
+                         <video 
+                            src={movie.url} 
+                            controls 
+                            autoPlay 
+                            className="max-h-full max-w-full w-full h-auto object-contain"
+                         />
                     </div>
                 </div>
             );
@@ -325,11 +322,7 @@
                         <h3 className="text-lg font-bold mb-4">Escolha um Tema</h3>
                         <div className="grid grid-cols-2 gap-3">
                             {Object.values(THEMES).map(t => (
-                                <button 
-                                    key={t.id}
-                                    onClick={() => onChange(t.id)}
-                                    className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${current === t.id ? 'border-white bg-white/10' : 'border-transparent bg-black/20'}`}
-                                >
+                                <button key={t.id} onClick={() => onChange(t.id)} className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${current === t.id ? 'border-white bg-white/10' : 'border-transparent bg-black/20'}`}>
                                     <div className={`w-8 h-8 rounded-full ${t.bg} border border-white/20 shadow-lg`}></div>
                                     <span className="text-sm font-medium">{t.name}</span>
                                 </button>
@@ -346,10 +339,7 @@
             
             const handleNext = (e) => {
                 e.preventDefault();
-                if(!email.includes('@')) {
-                    alert("Digite um e-mail válido");
-                    return;
-                }
+                if(!email.includes('@')) { alert("Digite um e-mail válido"); return; }
                 setStep(2);
                 setTimeout(() => {
                     const user = {
@@ -372,34 +362,21 @@
                     <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_120%,rgba(79,70,229,0.3),rgba(15,23,42,1))]"></div>
                     <div className="z-10 w-full max-w-sm glass p-8 rounded-2xl border border-white/10 shadow-2xl animate-fade-in">
                         <div className="flex justify-center mb-6">
-                            <div className="bg-white p-3 rounded-full">
-                                <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-8 h-8" alt="G" />
-                            </div>
+                            <div className="bg-white p-3 rounded-full"><img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-8 h-8" alt="G" /></div>
                         </div>
                         <h1 className="text-2xl font-bold text-center mb-2">Fazer login</h1>
                         <p className="text-center text-slate-300 text-sm mb-8">Use sua Conta do Google</p>
-
                         {step === 0 && (
                             <div className="space-y-4">
-                                <button onClick={() => setStep(1)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg">
-                                    Entrar com E-mail
-                                </button>
+                                <button onClick={() => setStep(1)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg">Entrar com E-mail</button>
                                 <p className="text-xs text-center text-slate-500">Demo PWA • Login Simulado</p>
                             </div>
                         )}
-
                         {step === 1 && (
                             <form onSubmit={handleNext} className="animate-fade-in">
                                 <div className="mb-4 text-left">
                                     <label className="text-xs font-semibold ml-1 text-slate-400">E-mail</label>
-                                    <input 
-                                        type="email" 
-                                        autoFocus
-                                        value={email}
-                                        onChange={e => setEmail(e.target.value)}
-                                        className="w-full mt-1 px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                        placeholder="seu@email.com"
-                                    />
+                                    <input type="email" autoFocus value={email} onChange={e => setEmail(e.target.value)} className="w-full mt-1 px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" placeholder="seu@email.com" />
                                 </div>
                                 <div className="flex justify-between items-center mt-8">
                                     <button type="button" onClick={() => setStep(0)} className="text-blue-400 text-sm font-medium">Voltar</button>
@@ -419,67 +396,76 @@
         };
 
         const Dashboard = ({ user, onLogout, updateTheme }) => {
-            const [items, setItems] = useState([]);
-            const [loading, setLoading] = useState(false);
-            const [exporting, setExporting] = useState(false);
+            const [movies, setMovies] = useState([]); // Agora lista apenas filmes prontos
+            const [isProcessing, setIsProcessing] = useState(false);
             const [progress, setProgress] = useState(0);
             const [showThemes, setShowThemes] = useState(false);
-            const [previewBlob, setPreviewBlob] = useState(null); // Estado para Preview
+            
+            // Estados de Modais
+            const [createdBlob, setCreatedBlob] = useState(null); // Blob recém criado para preview
+            const [viewingMovie, setViewingMovie] = useState(null); // Filme salvo sendo assistido
             
             const theme = THEMES[user.theme] || THEMES.default;
 
-            const loadData = async () => {
-                const dbItems = await getAllFromDB(user.email);
-                const itemsWithUrls = dbItems.map(item => ({
+            const loadMovies = async () => {
+                const dbMovies = await getMoviesFromDB(user.email);
+                const moviesWithUrls = dbMovies.map(item => ({
                     ...item,
                     url: URL.createObjectURL(item.blob)
                 }));
-                setItems(itemsWithUrls.sort((a, b) => b.timestamp - a.timestamp));
+                setMovies(moviesWithUrls.sort((a, b) => b.timestamp - a.timestamp));
             };
 
-            useEffect(() => { loadData(); }, []);
+            useEffect(() => { loadMovies(); }, []);
 
-            const handleUpload = async (e) => {
+            // Novo Fluxo: Criação Imediata
+            const handleCreation = async (e) => {
                 const files = Array.from(e.target.files);
                 if (files.length === 0) return;
-                setLoading(true);
-                for (const file of files) {
-                    await saveToDB(file, user.email);
-                }
-                await loadData();
-                setLoading(false);
-                e.target.value = ""; 
-            };
-
-            const handleExport = async () => {
-                if (items.length === 0) return;
-                setExporting(true);
-                setProgress(0);
-                const timeline = [...items].reverse();
                 
-                // Agora salva no PreviewBlob em vez de baixar direto
-                await exportVideo(timeline, setProgress, (blob) => {
-                    setExporting(false);
-                    setPreviewBlob(blob);
+                setIsProcessing(true);
+                setProgress(0);
+
+                // Mapear arquivos para objetos temporários com URL (transientes)
+                const tempItems = files.map(file => ({
+                    type: file.type,
+                    url: URL.createObjectURL(file)
+                }));
+                
+                // Processar filme imediatamente
+                await exportVideo(tempItems, setProgress, (blob) => {
+                    setIsProcessing(false);
+                    setCreatedBlob(blob);
+                    e.target.value = ""; // Resetar input
+                    
+                    // Limpar URLs temporários para memória
+                    tempItems.forEach(i => URL.revokeObjectURL(i.url));
                 });
             };
 
-            const saveFinalVideo = () => {
-                if(!previewBlob) return;
-                const url = URL.createObjectURL(previewBlob);
+            const saveCreatedToApp = async () => {
+                if(!createdBlob) return;
+                await saveMovieToDB(createdBlob, user.email);
+                await loadMovies();
+                setCreatedBlob(null); // Fecha modal
+            };
+
+            const downloadCreated = () => {
+                if(!createdBlob) return;
+                const url = URL.createObjectURL(createdBlob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `Memoria_Filme_${Date.now()}.mp4`; // Note: Navegador pode salvar como WebM
+                a.download = `Memoria_Filme_${Date.now()}.mp4`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
-                setPreviewBlob(null); // Fechar preview
             };
 
-            const handleDelete = async (id) => {
-                if(confirm("Remover da galeria?")) {
-                    await deleteFromDB(id);
-                    loadData();
+            const handleDeleteMovie = async (e, id) => {
+                e.stopPropagation();
+                if(confirm("Excluir este filme da sua galeria?")) {
+                    await deleteMovieFromDB(id);
+                    loadMovies();
                 }
             };
 
@@ -491,7 +477,7 @@
                             <img src={user.avatar} className="w-9 h-9 rounded-full border border-white/20 bg-white/10" />
                             <div>
                                 <h2 className="font-bold text-sm leading-tight">{user.name}</h2>
-                                <p className={`text-xs ${theme.accent} opacity-80`}>Online</p>
+                                <p className={`text-xs ${theme.accent} opacity-80`}>Filmes Salvos</p>
                             </div>
                         </div>
                         <div className="flex gap-2">
@@ -504,70 +490,80 @@
                         </div>
                     </div>
 
-                    {/* Grid */}
-                    <div className="grid grid-cols-3 gap-0.5 mt-0.5">
-                        {items.map((item) => (
-                            <div key={item.id} className="relative aspect-[9/16] bg-black/50 group overflow-hidden">
-                                {item.type.startsWith('video') ? (
-                                    <video src={item.url} className="w-full h-full object-cover opacity-90 no-click-video" muted />
-                                ) : (
-                                    <img src={item.url} className="w-full h-full object-cover" />
-                                )}
-                                {item.type.startsWith('video') && (
-                                    <div className="absolute top-1 right-1 bg-black/40 rounded-full p-1">
-                                        <Icon name="film" size={12} className="text-white" />
+                    {/* Grid de Filmes Salvos */}
+                    <div className="grid grid-cols-2 gap-2 p-2">
+                        {movies.map((movie) => (
+                            <div 
+                                key={movie.id} 
+                                onClick={() => setViewingMovie(movie)}
+                                className="relative aspect-[9/16] bg-black/50 group overflow-hidden rounded-xl border border-white/10 cursor-pointer shadow-lg"
+                            >
+                                <video src={movie.url} className="w-full h-full object-cover opacity-90 no-click-video" muted />
+                                
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
+                                    <div className="bg-white/20 p-3 rounded-full backdrop-blur-sm shadow-xl">
+                                        <Icon name="play" size={24} className="fill-white text-white" />
                                     </div>
-                                )}
-                                <button onClick={() => handleDelete(item.id)} className="absolute bottom-1 right-1 p-2 bg-red-600 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100">
-                                    <Icon name="trash-2" size={14} />
+                                </div>
+
+                                <button 
+                                    onClick={(e) => handleDeleteMovie(e, movie.id)} 
+                                    className="absolute top-2 right-2 p-2 bg-red-600/80 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all z-10"
+                                >
+                                    <Icon name="trash-2" size={16} />
                                 </button>
+                                
+                                <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent">
+                                    <p className="text-xs text-white/80 font-medium">
+                                        {new Date(movie.timestamp).toLocaleDateString()}
+                                    </p>
+                                </div>
                             </div>
                         ))}
                     </div>
 
                     {/* Empty State */}
-                    {items.length === 0 && !loading && (
+                    {movies.length === 0 && !isProcessing && (
                         <div className="mt-24 flex flex-col items-center opacity-40 gap-4 px-10 text-center">
                             <div className="p-6 rounded-full bg-white/5 border border-white/10 animate-bounce">
-                                <Icon name="sparkles" size={32} />
+                                <Icon name="clapperboard" size={32} />
                             </div>
-                            <p className="text-sm">Sua história começa aqui. Adicione momentos para criar seu filme.</p>
+                            <p className="text-sm">Sua galeria de filmes está vazia.<br/>Toque no botão + para criar um novo.</p>
                         </div>
                     )}
 
-                    {/* Loading Upload */}
-                    {loading && (
-                        <div className={`fixed top-24 left-1/2 -translate-x-1/2 ${theme.btn} text-white px-6 py-3 rounded-full shadow-xl z-50 flex items-center gap-3 text-sm font-bold animate-pulse`}>
-                            <Icon name="loader-2" className="animate-spin" size={18} />
-                            Enviando...
-                        </div>
-                    )}
-
-                    {/* Export Progress Overlay */}
-                    {exporting && (
+                    {/* Processing Overlay */}
+                    {isProcessing && (
                         <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-8 text-center animate-fade-in">
-                            <Icon name="clapperboard" size={48} className={`mb-6 ${theme.accent}`} />
-                            <h3 className="text-2xl font-bold mb-8">Renderizando...</h3>
+                            <Icon name="sparkles" size={48} className={`mb-6 ${theme.accent}`} />
+                            <h3 className="text-2xl font-bold mb-8">Criando Mágica...</h3>
                             <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-2 relative">
                                 <div className={`h-full ${theme.btn} transition-all duration-100`} style={{ width: `${progress}%` }}></div>
                             </div>
                             <p className="text-white font-mono text-lg mt-2">{progress}%</p>
                             <p className="text-white/40 text-xs mt-12 bg-white/5 px-4 py-2 rounded-lg border border-white/5">
-                                Aguarde, processando vídeos e áudio...
+                                Processando seus arquivos. Aguarde...
                             </p>
                         </div>
                     )}
 
-                    {/* Preview Modal */}
-                    {previewBlob && (
-                        <PreviewModal 
-                            blob={previewBlob} 
-                            onClose={() => setPreviewBlob(null)} 
-                            onSave={saveFinalVideo} 
+                    {/* Modais */}
+                    {createdBlob && (
+                        <CreationPreviewModal 
+                            blob={createdBlob} 
+                            onClose={() => setCreatedBlob(null)} 
+                            onSaveToApp={saveCreatedToApp}
+                            onDownload={downloadCreated}
                         />
                     )}
 
-                    {/* Theme Modal */}
+                    {viewingMovie && (
+                        <MoviePlayerModal 
+                            movie={viewingMovie} 
+                            onClose={() => setViewingMovie(null)} 
+                        />
+                    )}
+
                     {showThemes && (
                         <ThemeSelector 
                             current={user.theme} 
@@ -576,20 +572,11 @@
                         />
                     )}
 
-                    {/* Floating Bar */}
-                    <div className="fixed bottom-8 left-0 right-0 px-6 flex justify-center items-center gap-4 z-40">
-                        {items.length > 0 && !exporting && !previewBlob && (
-                            <button 
-                                onClick={handleExport}
-                                className="bg-white text-slate-900 h-14 px-8 rounded-full font-bold shadow-lg shadow-white/10 flex items-center gap-2 active:scale-95 transition-transform"
-                            >
-                                <Icon name="play" size={20} className="fill-current" />
-                                Criar Filme
-                            </button>
-                        )}
-                        <label className={`h-14 w-14 ${theme.btn} rounded-full flex items-center justify-center text-white shadow-lg cursor-pointer active:scale-90 transition-transform hover:brightness-110`}>
-                            <input type="file" multiple accept="image/*,video/*" className="hidden" onChange={handleUpload} />
-                            <Icon name="plus" size={32} />
+                    {/* Botão de Criação Flutuante */}
+                    <div className="fixed bottom-8 left-0 right-0 px-6 flex justify-center items-center z-40 pointer-events-none">
+                        <label className={`pointer-events-auto h-16 w-16 ${theme.btn} rounded-full flex items-center justify-center text-white shadow-xl shadow-indigo-500/30 cursor-pointer active:scale-90 transition-transform hover:brightness-110 hover:scale-105`}>
+                            <input type="file" multiple accept="image/*,video/*" className="hidden" onChange={handleCreation} />
+                            <Icon name="plus" size={36} />
                         </label>
                     </div>
                 </div>
