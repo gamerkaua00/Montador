@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Memoria Creator</title>
+    <title>Memoria Creator Studio</title>
     
     <meta name="theme-color" content="#4f46e5">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -21,8 +21,8 @@
 
     <style>
         body { 
-            background-color: #0f172a; 
-            color: white; 
+            background-color: #020617; 
+            color: #f8fafc; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             -webkit-tap-highlight-color: transparent; 
             overflow-x: hidden;
@@ -31,11 +31,24 @@
         
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        .animate-slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
         
         video::-webkit-media-controls { display:none !important; }
         .no-click-video { pointer-events: none; }
         
-        .glass { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
+        /* Glassmorphism Refinado */
+        .glass { 
+            background: rgba(30, 41, 59, 0.4); 
+            backdrop-filter: blur(12px); 
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        /* Scrollbar oculta para visual limpo */
+        .hide-scroll::-webkit-scrollbar { display: none; }
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 
     <script>
@@ -44,7 +57,7 @@
             "short_name": "Memoria",
             "start_url": ".",
             "display": "standalone",
-            "background_color": "#0f172a",
+            "background_color": "#020617",
             "theme_color": "#4f46e5",
             "orientation": "portrait",
             "icons": [
@@ -59,18 +72,18 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
+        const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
         // --- THEME SYSTEM ---
         const THEMES = {
-            default: { id: 'default', name: 'Indigo Night', bg: 'bg-slate-900', accent: 'text-indigo-400', btn: 'bg-indigo-600', gradient: 'from-indigo-900 to-slate-900' },
-            ocean:   { id: 'ocean', name: 'Deep Ocean', bg: 'bg-cyan-950', accent: 'text-cyan-400', btn: 'bg-cyan-600', gradient: 'from-cyan-900 to-blue-900' },
-            sunset:  { id: 'sunset', name: 'Sunset Vibes', bg: 'bg-orange-950', accent: 'text-orange-400', btn: 'bg-orange-600', gradient: 'from-orange-900 to-red-900' },
-            oled:    { id: 'oled', name: 'OLED Black', bg: 'bg-black', accent: 'text-white', btn: 'bg-zinc-800', gradient: 'from-black to-zinc-900' }
+            default: { id: 'default', name: 'Indigo Night', bg: 'bg-slate-950', accent: 'text-indigo-400', btn: 'bg-indigo-600 hover:bg-indigo-500', gradient: 'from-indigo-900/40 to-slate-900' },
+            ocean:   { id: 'ocean', name: 'Deep Ocean', bg: 'bg-cyan-950', accent: 'text-cyan-400', btn: 'bg-cyan-600 hover:bg-cyan-500', gradient: 'from-cyan-900/40 to-blue-950' },
+            sunset:  { id: 'sunset', name: 'Sunset Vibes', bg: 'bg-orange-950', accent: 'text-orange-400', btn: 'bg-orange-600 hover:bg-orange-500', gradient: 'from-orange-900/40 to-red-950' },
+            oled:    { id: 'oled', name: 'OLED Black', bg: 'bg-black', accent: 'text-white', btn: 'bg-zinc-800 hover:bg-zinc-700', gradient: 'from-zinc-900 to-black' }
         };
 
         // --- DATABASE ---
-        const DB_NAME = "MemoriaAppDB_V7"; 
+        const DB_NAME = "MemoriaAppDB_V10"; // Nova versão DB para evitar conflitos
         const STORE_NAME = "final_movies"; 
 
         const initDB = () => {
@@ -81,7 +94,7 @@
                     if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: "id" });
                 };
                 request.onsuccess = (e) => resolve(e.target.result);
-                request.onerror = (e) => reject("DB Error");
+                request.onerror = (e) => reject("Erro crítico no Banco de Dados");
             });
         };
 
@@ -99,7 +112,7 @@
                     };
                     tx.objectStore(STORE_NAME).add(item);
                     tx.oncomplete = () => resolve(true);
-                    tx.onerror = () => reject("Save Error");
+                    tx.onerror = () => reject("Falha ao salvar");
                 });
             } catch (e) { return false; }
         };
@@ -129,266 +142,277 @@
             });
         }
 
-        // --- RENDERER (Alta Qualidade + Ken Burns + Fix Tela Preta) ---
-        const exportVideo = async (items, onProgress, onComplete) => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 720; 
-            canvas.height = 1280; 
-            const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
-            
-            // Qualidade de desenho
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // Garantir contexto de áudio ativo
-            if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
-            }
-
-            const audioDest = audioCtx.createMediaStreamDestination();
-            const canvasStream = canvas.captureStream(30);
-            
-            // Adicionar trilha de áudio se existir
-            if (audioDest.stream.getAudioTracks().length > 0) {
-                 canvasStream.addTrack(audioDest.stream.getAudioTracks()[0]);
-            }
-            
-            const combinedStream = new MediaStream([
-                ...canvasStream.getVideoTracks(),
-                ...audioDest.stream.getAudioTracks()
-            ]);
-
-            let mimeType = 'video/webm; codecs=vp9';
-            if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
-
-            // BITRATE AUMENTADO: 5 Mbps para melhor qualidade
-            const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 5000000 }); 
-            const chunks = [];
-            recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-            recorder.onstop = () => onComplete(new Blob(chunks, { type: mimeType }));
-            recorder.start();
-
-            const TRANSITION_FRAMES = 15; // Transição suave
-            
-            for (let i = 0; i < items.length; i++) {
-                const item = items[i];
-                const progressPercent = Math.round((i / items.length) * 100);
-                onProgress(progressPercent);
-
-                let asset = null;
-                let durationFrames = 0;
-                let isVideo = false;
-                let audioSource = null;
-
-                if (item.type.startsWith('image')) {
-                    const img = new Image();
-                    img.src = item.url;
-                    
-                    // FIX TELA PRETA: Usar decode() para garantir que a imagem está pronta
+        // --- RENDERER ENGINE V10 (Full HD + Robust Image Loader) ---
+        
+        // Helper: Carregador de Imagem Robusto (Anti-Tela Preta)
+        const loadRobustImage = (url) => {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.onload = async () => {
                     try {
+                        // Tenta decodificar para garantir que está na memória da GPU
                         await img.decode();
-                    } catch (err) {
-                        console.warn("Falha ao decodificar imagem, tentando onload normal", err);
-                        await new Promise(r => img.onload = r);
+                        resolve(img);
+                    } catch (e) {
+                        console.warn("Decode falhou, usando fallback onload", e);
+                        resolve(img); // Retorna mesmo se decode falhar, pois onload disparou
                     }
-                    
-                    asset = img;
-                    durationFrames = 90; // 3 segundos por foto
-                    isVideo = false;
-                } else {
-                    const vid = document.createElement('video');
-                    vid.src = item.url;
-                    vid.crossOrigin = "anonymous";
-                    vid.playsInline = true;
-                    vid.volume = 1.0; 
-                    
-                    await new Promise(resolve => {
-                        vid.onloadeddata = () => resolve();
-                        vid.onerror = () => resolve();
-                        // Timeout de segurança aumentado
-                        setTimeout(resolve, 4000); 
-                    });
-                    
-                    asset = vid;
-                    durationFrames = Math.ceil(vid.duration * 30);
-                    isVideo = true;
-
-                    // Conectar áudio antes do play
-                    try {
-                        audioSource = audioCtx.createMediaElementSource(vid);
-                        audioSource.connect(audioDest);
-                    } catch(e) {
-                        console.warn("Erro ao conectar audio:", e);
-                    }
-
-                    try { await vid.play(); } catch(e){}
-                }
-
-                // Loop de Frames do item
-                for (let f = 0; f < durationFrames; f++) {
-                    ctx.save();
-                    
-                    // Calcular dimensões originais
-                    let w = isVideo ? asset.videoWidth : asset.width;
-                    let h = isVideo ? asset.videoHeight : asset.height;
-
-                    if (w > 0 && h > 0) {
-                        // 1. BACKGROUND (Fundo com movimento leve)
-                        // Para não ficar estático, aplicamos um leve zoom também no fundo
-                        const bgZoom = 1 + (f / durationFrames) * 0.05;
-                        
-                        // Calculo de Cover para o fundo
-                        const scaleCover = Math.max(canvas.width / w, canvas.height / h) * bgZoom;
-                        const wCover = w * scaleCover;
-                        const hCover = h * scaleCover;
-                        const xCover = (canvas.width - wCover) / 2;
-                        const yCover = (canvas.height - hCover) / 2;
-                        
-                        ctx.drawImage(asset, xCover, yCover, wCover, hCover);
-                        
-                        // Overlay escuro mais elegante
-                        ctx.fillStyle = 'rgba(0,0,0,0.65)'; 
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                        // 2. FOREGROUND (Efeito Ken Burns - Zoom Suave)
-                        // Calcula zoom progressivo (de 1.0 a 1.1)
-                        const zoom = isVideo ? 1 : 1 + (f / durationFrames) * 0.08; 
-                        
-                        // Escala Contain
-                        const scaleContain = Math.min(canvas.width / w, canvas.height / h) * zoom;
-                        const wFinal = w * scaleContain;
-                        const hFinal = h * scaleContain;
-                        
-                        // Centralizar com base no novo tamanho
-                        const xFinal = (canvas.width - wFinal) / 2;
-                        const yFinal = (canvas.height - hFinal) / 2;
-
-                        // Sombra projetada
-                        ctx.shadowColor = "rgba(0,0,0,0.6)";
-                        ctx.shadowBlur = 30;
-                        ctx.shadowOffsetX = 0;
-                        ctx.shadowOffsetY = 10;
-
-                        ctx.drawImage(asset, xFinal, yFinal, wFinal, hFinal);
-                    } else {
-                        // Fallback se dimensões forem 0
-                        ctx.fillStyle = '#1e1b4b'; // Indigo escuro
-                        ctx.fillRect(0,0, canvas.width, canvas.height);
-                    }
-                    ctx.restore();
-
-                    // Transição Suave (Cross-dissolve simulado com fade)
-                    if (f < TRANSITION_FRAMES && i > 0) {
-                        // Fade in do preto (simples mas eficaz)
-                        ctx.fillStyle = `rgba(0,0,0,${1 - (f/TRANSITION_FRAMES)})`;
-                        ctx.fillRect(0,0,canvas.width, canvas.height);
-                    }
-
-                    await new Promise(r => setTimeout(r, 33)); // 30 FPS target
-                }
-                
-                if(isVideo) {
-                    if(audioSource) {
-                        try { audioSource.disconnect(); } catch(e){}
-                    }
-                    asset.pause();
-                    asset.remove();
-                }
-            }
-
-            recorder.stop();
-            setTimeout(() => {
-                if(audioCtx.state !== 'closed') audioCtx.close();
-            }, 1000);
-            
-            onProgress(100);
+                };
+                img.onerror = (e) => {
+                    console.error("Erro ao carregar imagem:", url, e);
+                    reject(e);
+                };
+                img.src = url;
+            });
         };
 
-        // --- COMPONENTS ---
+        const exportVideo = async (items, onProgress, onComplete, onError) => {
+            try {
+                const canvas = document.createElement('canvas');
+                // UPGRADE: Full HD Resolution
+                canvas.width = 1080; 
+                canvas.height = 1920; 
+                const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+                
+                // Configuração de Alta Qualidade
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
+                
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Forçar "acordar" o contexto de áudio
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+
+                const audioDest = audioCtx.createMediaStreamDestination();
+                const canvasStream = canvas.captureStream(30);
+                
+                if (audioDest.stream.getAudioTracks().length > 0) {
+                    canvasStream.addTrack(audioDest.stream.getAudioTracks()[0]);
+                }
+                
+                const combinedStream = new MediaStream([
+                    ...canvasStream.getVideoTracks(),
+                    ...audioDest.stream.getAudioTracks()
+                ]);
+
+                let mimeType = 'video/webm; codecs=vp9';
+                if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+
+                // UPGRADE: 8 Mbps Bitrate para qualidade cristalina
+                const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 8000000 }); 
+                const chunks = [];
+                recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+                recorder.onstop = () => onComplete(new Blob(chunks, { type: mimeType }));
+                recorder.start();
+
+                const TRANSITION_FRAMES = 15;
+                
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    const progressPercent = Math.round((i / items.length) * 100);
+                    onProgress(progressPercent);
+
+                    let asset = null;
+                    let durationFrames = 0;
+                    let isVideo = false;
+                    let audioSource = null;
+
+                    try {
+                        if (item.type.startsWith('image')) {
+                            // Uso do carregador robusto
+                            asset = await loadRobustImage(item.url);
+                            durationFrames = 90; // 3 segundos
+                            isVideo = false;
+                        } else {
+                            const vid = document.createElement('video');
+                            vid.src = item.url;
+                            vid.crossOrigin = "anonymous";
+                            vid.playsInline = true;
+                            vid.volume = 1.0; 
+                            
+                            // Loader de vídeo mais paciente
+                            await new Promise((resolve, reject) => {
+                                vid.onloadeddata = () => resolve();
+                                vid.onerror = () => reject("Erro ao carregar video");
+                                setTimeout(() => resolve(), 5000); // Timeout maior para vídeos pesados
+                            });
+                            
+                            // Verificação de segurança
+                            if (vid.videoWidth === 0) throw new Error("Video inválido");
+
+                            asset = vid;
+                            durationFrames = Math.ceil(vid.duration * 30);
+                            isVideo = true;
+
+                            try {
+                                audioSource = audioCtx.createMediaElementSource(vid);
+                                audioSource.connect(audioDest);
+                            } catch(e) { console.warn("Audio connect error", e); }
+
+                            await vid.play();
+                        }
+
+                        // Loop de Renderização
+                        for (let f = 0; f < durationFrames; f++) {
+                            ctx.save();
+                            
+                            let w = isVideo ? asset.videoWidth : asset.width;
+                            let h = isVideo ? asset.videoHeight : asset.height;
+
+                            if (w > 0 && h > 0) {
+                                // 1. BACKGROUND (Blur mais escuro e elegante)
+                                const bgZoom = 1 + (f / durationFrames) * 0.05;
+                                const scaleCover = Math.max(canvas.width / w, canvas.height / h) * bgZoom;
+                                const wCover = w * scaleCover;
+                                const hCover = h * scaleCover;
+                                const xCover = (canvas.width - wCover) / 2;
+                                const yCover = (canvas.height - hCover) / 2;
+                                
+                                ctx.drawImage(asset, xCover, yCover, wCover, hCover);
+                                
+                                // Vinheta escura
+                                const gradient = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.width/4, canvas.width/2, canvas.height/2, canvas.height);
+                                gradient.addColorStop(0, 'rgba(0,0,0,0.5)');
+                                gradient.addColorStop(1, 'rgba(0,0,0,0.85)');
+                                ctx.fillStyle = gradient;
+                                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                                // 2. FOREGROUND (Ken Burns refinado)
+                                const zoomStart = 1.0;
+                                const zoomEnd = 1.08;
+                                const zoom = zoomStart + ((zoomEnd - zoomStart) * (f / durationFrames));
+                                
+                                const scaleContain = Math.min(canvas.width / w, canvas.height / h) * zoom * 0.90; // 90% para margem de respiro
+                                const wFinal = w * scaleContain;
+                                const hFinal = h * scaleContain;
+                                const xFinal = (canvas.width - wFinal) / 2;
+                                const yFinal = (canvas.height - hFinal) / 2;
+
+                                // Shadow cinematográfica
+                                ctx.shadowColor = "rgba(0,0,0,0.7)";
+                                ctx.shadowBlur = 50;
+                                ctx.shadowOffsetY = 20;
+
+                                ctx.drawImage(asset, xFinal, yFinal, wFinal, hFinal);
+                            } else {
+                                // Fallback seguro
+                                ctx.fillStyle = '#000';
+                                ctx.fillRect(0,0, canvas.width, canvas.height);
+                            }
+                            ctx.restore();
+
+                            // Cross-fade
+                            if (f < TRANSITION_FRAMES && i > 0) {
+                                ctx.fillStyle = `rgba(0,0,0,${1 - (f/TRANSITION_FRAMES)})`;
+                                ctx.fillRect(0,0,canvas.width, canvas.height);
+                            }
+
+                            await new Promise(r => setTimeout(r, 10)); // Renderizar o mais rápido possível mas mantendo async
+                        }
+                    } catch (err) {
+                        console.error("Erro ao processar item", i, err);
+                        // Continua para o próximo item em vez de travar tudo
+                    } finally {
+                         if(isVideo && asset) {
+                            if(audioSource) try { audioSource.disconnect(); } catch(e){}
+                            asset.pause();
+                            asset.remove();
+                        }
+                    }
+                }
+
+                recorder.stop();
+                setTimeout(() => { if(audioCtx.state !== 'closed') audioCtx.close(); }, 1000);
+                onProgress(100);
+
+            } catch (fatalError) {
+                console.error(fatalError);
+                onError("Erro fatal na renderização. Tente menos arquivos.");
+            }
+        };
+
+        // --- UI COMPONENTS ---
 
         const Icon = ({ name, size=24, className="" }) => {
             useEffect(() => lucide.createIcons(), [name]);
             return <i data-lucide={name} width={size} height={size} className={className}></i>;
         };
 
-        const CreationPreviewModal = ({ blob, onClose, onSaveToApp, onDownload }) => {
-            const url = useMemo(() => URL.createObjectURL(blob), [blob]);
+        // Toast Notification System
+        const Toast = ({ message, type, onClose }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, 3000);
+                return () => clearTimeout(timer);
+            }, [onClose]);
+
+            const bg = type === 'error' ? 'bg-red-600' : 'bg-emerald-600';
 
             return (
-                <div className="fixed inset-0 z-50 bg-black flex flex-col animate-fade-in">
-                    <div className="flex-1 flex items-center justify-center bg-black relative">
+                <div className={`fixed top-4 left-1/2 -translate-x-1/2 ${bg} text-white px-6 py-3 rounded-full shadow-2xl z-[100] flex items-center gap-3 animate-fade-in`}>
+                    <Icon name={type === 'error' ? 'alert-circle' : 'check-circle'} size={20} />
+                    <span className="font-medium text-sm">{message}</span>
+                </div>
+            );
+        };
+
+        const PreviewModal = ({ blob, onClose, onSave, onDownload }) => {
+            const url = useMemo(() => URL.createObjectURL(blob), [blob]);
+            return (
+                <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col animate-fade-in">
+                    <div className="flex-1 flex items-center justify-center p-4 relative">
                          <video 
                             src={url} 
                             controls 
                             autoPlay 
-                            className="max-h-full max-w-full w-full h-auto object-contain"
+                            className="max-h-full w-full max-w-lg rounded-lg shadow-2xl border border-white/10"
                          />
                     </div>
-                    <div className="p-6 bg-slate-900 border-t border-white/10 flex flex-col gap-3 safe-area-bottom">
-                        <div className="flex gap-3">
-                            <button onClick={onSaveToApp} className="flex-1 py-4 bg-indigo-600 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                    <div className="bg-slate-900 border-t border-white/10 p-6 safe-area-bottom">
+                        <div className="flex gap-4 max-w-md mx-auto">
+                            <button onClick={onSave} className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all">
                                 <Icon name="save" size={20} />
-                                Salvar na Galeria
+                                <span>Salvar</span>
                             </button>
-                            <button onClick={onDownload} className="flex-1 py-4 bg-slate-700 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                            <button onClick={onDownload} className="flex-1 py-4 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all">
                                 <Icon name="download" size={20} />
-                                Baixar
+                                <span>Baixar</span>
                             </button>
                         </div>
-                        <button onClick={onClose} className="py-3 text-white/50 text-sm font-medium">Descartar Filme</button>
+                        <button onClick={onClose} className="w-full mt-4 py-2 text-white/40 text-sm hover:text-white transition-colors">Descartar e Voltar</button>
                     </div>
                 </div>
             );
         };
 
-        const MoviePlayerModal = ({ movie, onClose }) => {
-            return (
-                <div className="fixed inset-0 z-50 bg-black flex flex-col animate-fade-in">
-                    <div className="absolute top-4 right-4 z-50">
-                        <button onClick={onClose} className="bg-black/50 p-2 rounded-full text-white backdrop-blur">
-                            <Icon name="x" size={24} />
-                        </button>
-                    </div>
-                    <div className="flex-1 flex items-center justify-center bg-black">
-                         <video 
-                            src={movie.url} 
-                            controls 
-                            autoPlay 
-                            className="max-h-full max-w-full w-full h-auto object-contain"
-                         />
+        const ThemeModal = ({ current, onChange, onClose }) => (
+            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+                <div className="bg-slate-900 w-full max-w-sm p-6 rounded-t-2xl sm:rounded-2xl border border-white/10 shadow-2xl" onClick={e => e.stopPropagation()}>
+                    <h3 className="text-xl font-bold mb-6 text-center">Aparência</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                        {Object.values(THEMES).map(t => (
+                            <button key={t.id} onClick={() => onChange(t.id)} className={`relative p-4 rounded-xl border flex flex-col items-center gap-3 transition-all ${current === t.id ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/5 bg-white/5 hover:bg-white/10'}`}>
+                                <div className={`w-10 h-10 rounded-full ${t.bg} border-2 border-white/20 shadow-xl`}></div>
+                                <span className="text-sm font-medium">{t.name}</span>
+                                {current === t.id && <div className="absolute top-2 right-2 w-2 h-2 bg-indigo-500 rounded-full"></div>}
+                            </button>
+                        ))}
                     </div>
                 </div>
-            );
-        };
-
-        const ThemeSelector = ({ current, onChange, onClose }) => {
-            return (
-                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in" onClick={onClose}>
-                    <div className="bg-slate-800 w-full max-w-sm p-6 rounded-t-2xl sm:rounded-2xl border border-white/10" onClick={e => e.stopPropagation()}>
-                        <h3 className="text-lg font-bold mb-4">Escolha um Tema</h3>
-                        <div className="grid grid-cols-2 gap-3">
-                            {Object.values(THEMES).map(t => (
-                                <button key={t.id} onClick={() => onChange(t.id)} className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${current === t.id ? 'border-white bg-white/10' : 'border-transparent bg-black/20'}`}>
-                                    <div className={`w-8 h-8 rounded-full ${t.bg} border border-white/20 shadow-lg`}></div>
-                                    <span className="text-sm font-medium">{t.name}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            );
-        };
+            </div>
+        );
 
         const LoginScreen = ({ onLogin }) => {
             const [email, setEmail] = useState("");
-            const [step, setStep] = useState(0); 
-            
-            const handleNext = (e) => {
+            const [loading, setLoading] = useState(false);
+
+            const handleSubmit = (e) => {
                 e.preventDefault();
-                if(!email.includes('@')) { alert("Digite um e-mail válido"); return; }
-                setStep(2);
+                if(!email.includes('@')) return alert("E-mail inválido");
+                
+                setLoading(true);
                 setTimeout(() => {
                     const user = {
                         name: email.split('@')[0],
@@ -396,231 +420,266 @@
                         avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${email}`,
                         theme: 'default'
                     };
-                    const existing = localStorage.getItem(`memoria_prefs_${email}`);
-                    if(existing) {
-                        const prefs = JSON.parse(existing);
-                        user.theme = prefs.theme || 'default';
-                    }
+                    const savedPrefs = localStorage.getItem(`memoria_prefs_${email}`);
+                    if(savedPrefs) user.theme = JSON.parse(savedPrefs).theme;
                     onLogin(user);
-                }, 1500);
+                }, 1000);
             };
 
             return (
-                <div className="h-screen flex flex-col items-center justify-center p-6 bg-slate-900 text-white relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_120%,rgba(79,70,229,0.3),rgba(15,23,42,1))]"></div>
-                    <div className="z-10 w-full max-w-sm glass p-8 rounded-2xl border border-white/10 shadow-2xl animate-fade-in">
-                        <div className="flex justify-center mb-6">
-                            <div className="bg-white p-3 rounded-full"><img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-8 h-8" alt="G" /></div>
+                <div className="h-screen flex flex-col items-center justify-center p-6 bg-[#020617] relative overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(79,70,229,0.15),transparent_50%)]"></div>
+                    
+                    <div className="z-10 w-full max-w-sm glass p-8 rounded-2xl shadow-2xl animate-fade-in border border-white/10">
+                        <div className="flex justify-center mb-8">
+                            <div className="w-16 h-16 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                                <Icon name="clapperboard" size={32} className="text-white" />
+                            </div>
                         </div>
-                        <h1 className="text-2xl font-bold text-center mb-2">Fazer login</h1>
-                        <p className="text-center text-slate-300 text-sm mb-8">Use sua Conta do Google</p>
-                        {step === 0 && (
-                            <div className="space-y-4">
-                                <button onClick={() => setStep(1)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors shadow-lg">Entrar com E-mail</button>
-                                <p className="text-xs text-center text-slate-500">Demo PWA • Login Simulado</p>
+                        
+                        <h1 className="text-2xl font-bold text-center mb-2">Bem-vindo</h1>
+                        <p className="text-center text-slate-400 text-sm mb-8">Entre para criar e salvar seus filmes.</p>
+
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="text-xs font-semibold ml-1 text-slate-500 uppercase tracking-wider">E-mail</label>
+                                <input 
+                                    type="email" 
+                                    required
+                                    value={email}
+                                    onChange={e => setEmail(e.target.value)}
+                                    className="w-full mt-1 px-4 py-3.5 bg-slate-800/50 border border-slate-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all text-white placeholder-slate-600"
+                                    placeholder="seu@email.com"
+                                />
                             </div>
-                        )}
-                        {step === 1 && (
-                            <form onSubmit={handleNext} className="animate-fade-in">
-                                <div className="mb-4 text-left">
-                                    <label className="text-xs font-semibold ml-1 text-slate-400">E-mail</label>
-                                    <input type="email" autoFocus value={email} onChange={e => setEmail(e.target.value)} className="w-full mt-1 px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" placeholder="seu@email.com" />
-                                </div>
-                                <div className="flex justify-between items-center mt-8">
-                                    <button type="button" onClick={() => setStep(0)} className="text-blue-400 text-sm font-medium">Voltar</button>
-                                    <button type="submit" className="bg-blue-600 px-6 py-2 rounded-full font-medium hover:bg-blue-700 transition-colors">Próxima</button>
-                                </div>
-                            </form>
-                        )}
-                        {step === 2 && (
-                            <div className="flex flex-col items-center py-4 animate-fade-in">
-                                <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-                                <p className="text-sm">Verificando informações...</p>
-                            </div>
-                        )}
+                            
+                            <button 
+                                type="submit" 
+                                disabled={loading}
+                                className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-white shadow-lg shadow-indigo-500/20 active:scale-95 transition-all flex justify-center items-center gap-2"
+                            >
+                                {loading ? <Icon name="loader-2" className="animate-spin" /> : "Entrar"}
+                            </button>
+                        </form>
+                        <p className="mt-6 text-center text-xs text-slate-600">
+                            Ao entrar, você aceita salvar dados localmente.
+                        </p>
                     </div>
                 </div>
             );
         };
 
         const Dashboard = ({ user, onLogout, updateTheme }) => {
-            const [movies, setMovies] = useState([]); // Agora lista apenas filmes prontos
+            const [movies, setMovies] = useState([]);
             const [isProcessing, setIsProcessing] = useState(false);
             const [progress, setProgress] = useState(0);
             const [showThemes, setShowThemes] = useState(false);
+            const [toast, setToast] = useState(null);
             
-            // Estados de Modais
-            const [createdBlob, setCreatedBlob] = useState(null); // Blob recém criado para preview
-            const [viewingMovie, setViewingMovie] = useState(null); // Filme salvo sendo assistido
+            // Preview States
+            const [createdBlob, setCreatedBlob] = useState(null);
+            const [viewingMovie, setViewingMovie] = useState(null);
             
             const theme = THEMES[user.theme] || THEMES.default;
 
             const loadMovies = async () => {
                 const dbMovies = await getMoviesFromDB(user.email);
-                const moviesWithUrls = dbMovies.map(item => ({
-                    ...item,
-                    url: URL.createObjectURL(item.blob)
-                }));
-                setMovies(moviesWithUrls.sort((a, b) => b.timestamp - a.timestamp));
+                const urls = dbMovies.map(m => ({ ...m, url: URL.createObjectURL(m.blob) }));
+                setMovies(urls.sort((a, b) => b.timestamp - a.timestamp));
             };
 
             useEffect(() => { loadMovies(); }, []);
 
-            // Novo Fluxo: Criação Imediata
+            const showToast = (msg, type = 'success') => setToast({ message: msg, type });
+
             const handleCreation = async (e) => {
                 const files = Array.from(e.target.files);
                 if (files.length === 0) return;
                 
+                // Validação de tipos
+                const validFiles = files.filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'));
+                if(validFiles.length !== files.length) showToast("Alguns arquivos inválidos foram ignorados", 'error');
+                if(validFiles.length === 0) return;
+
                 setIsProcessing(true);
                 setProgress(0);
 
-                const tempItems = files.map(file => ({
+                const tempItems = validFiles.map(file => ({
                     type: file.type,
                     url: URL.createObjectURL(file)
                 }));
                 
-                await exportVideo(tempItems, setProgress, (blob) => {
-                    setIsProcessing(false);
-                    setCreatedBlob(blob);
-                    e.target.value = ""; 
-                    tempItems.forEach(i => URL.revokeObjectURL(i.url));
-                });
+                await exportVideo(
+                    tempItems, 
+                    setProgress, 
+                    (blob) => {
+                        setIsProcessing(false);
+                        setCreatedBlob(blob);
+                        e.target.value = ""; 
+                        tempItems.forEach(i => URL.revokeObjectURL(i.url));
+                        showToast("Filme criado com sucesso!");
+                    },
+                    (errorMsg) => {
+                        setIsProcessing(false);
+                        showToast(errorMsg, 'error');
+                        e.target.value = "";
+                    }
+                );
             };
 
-            const saveCreatedToApp = async () => {
+            const saveCreated = async () => {
                 if(!createdBlob) return;
                 await saveMovieToDB(createdBlob, user.email);
                 await loadMovies();
-                setCreatedBlob(null); 
+                setCreatedBlob(null);
+                showToast("Salvo na galeria!");
             };
 
-            const downloadCreated = () => {
-                if(!createdBlob) return;
-                const url = URL.createObjectURL(createdBlob);
+            const downloadVideo = (blobToDownload) => {
+                if(!blobToDownload) return;
+                const url = URL.createObjectURL(blobToDownload);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `Memoria_Filme_${Date.now()}.mp4`;
+                a.download = `Memoria_Cine_${Date.now()}.mp4`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
             };
 
-            const handleDeleteMovie = async (e, id) => {
+            const handleDelete = async (e, id) => {
                 e.stopPropagation();
-                if(confirm("Excluir este filme da sua galeria?")) {
+                if(confirm("Excluir este filme permanentemente?")) {
                     await deleteMovieFromDB(id);
                     loadMovies();
+                    showToast("Filme excluído", 'success');
                 }
             };
 
             return (
                 <div className={`min-h-screen pb-32 ${theme.bg} transition-colors duration-500`}>
-                    {/* Header */}
-                    <div className="sticky top-0 z-20 bg-black/20 backdrop-blur-lg border-b border-white/5 px-4 py-4 flex justify-between items-center">
+                    {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+
+                    {/* Navbar */}
+                    <div className="sticky top-0 z-30 bg-black/40 backdrop-blur-xl border-b border-white/5 px-6 py-4 flex justify-between items-center">
                         <div className="flex items-center gap-3">
-                            <img src={user.avatar} className="w-9 h-9 rounded-full border border-white/20 bg-white/10" />
+                            <div className="relative">
+                                <img src={user.avatar} className="w-10 h-10 rounded-full border border-white/10 shadow-lg" />
+                                <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-black rounded-full"></div>
+                            </div>
                             <div>
-                                <h2 className="font-bold text-sm leading-tight">{user.name}</h2>
-                                <p className={`text-xs ${theme.accent} opacity-80`}>Filmes Salvos</p>
+                                <h2 className="font-bold text-sm leading-tight text-white">{user.name}</h2>
+                                <p className={`text-xs ${theme.accent} font-medium`}>Creator Studio</p>
                             </div>
                         </div>
                         <div className="flex gap-2">
-                            <button onClick={() => setShowThemes(true)} className="p-2 rounded-full hover:bg-white/10 transition-colors">
-                                <Icon name="palette" size={20} className="text-white/80" />
+                            <button onClick={() => setShowThemes(true)} className="w-10 h-10 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
+                                <Icon name="palette" size={18} className="text-slate-300" />
                             </button>
-                            <button onClick={onLogout} className="p-2 rounded-full hover:bg-white/10 transition-colors">
-                                <Icon name="log-out" size={20} className="text-white/80" />
+                            <button onClick={onLogout} className="w-10 h-10 rounded-full bg-white/5 hover:bg-red-500/20 flex items-center justify-center transition-colors group">
+                                <Icon name="log-out" size={18} className="text-slate-300 group-hover:text-red-400" />
                             </button>
                         </div>
                     </div>
 
-                    {/* Grid de Filmes Salvos */}
-                    <div className="grid grid-cols-2 gap-2 p-2">
-                        {movies.map((movie) => (
-                            <div 
-                                key={movie.id} 
-                                onClick={() => setViewingMovie(movie)}
-                                className="relative aspect-[9/16] bg-black/50 group overflow-hidden rounded-xl border border-white/10 cursor-pointer shadow-lg"
-                            >
-                                <video src={movie.url} className="w-full h-full object-cover opacity-90 no-click-video" muted />
-                                
-                                <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
-                                    <div className="bg-white/20 p-3 rounded-full backdrop-blur-sm shadow-xl">
-                                        <Icon name="play" size={24} className="fill-white text-white" />
-                                    </div>
-                                </div>
+                    {/* Gallery */}
+                    <main className="p-4">
+                        {movies.length > 0 ? (
+                            <div className="grid grid-cols-2 gap-3">
+                                {movies.map((movie) => (
+                                    <div 
+                                        key={movie.id} 
+                                        onClick={() => setViewingMovie(movie)}
+                                        className="relative aspect-[9/16] bg-slate-800 rounded-2xl overflow-hidden cursor-pointer group shadow-lg border border-white/5 hover:border-indigo-500/50 transition-all"
+                                    >
+                                        <video src={movie.url} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500" muted />
+                                        
+                                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black/20 backdrop-blur-[2px]">
+                                            <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center shadow-2xl">
+                                                <Icon name="play" size={24} className="fill-white text-white ml-1" />
+                                            </div>
+                                        </div>
 
-                                <button 
-                                    onClick={(e) => handleDeleteMovie(e, movie.id)} 
-                                    className="absolute top-2 right-2 p-2 bg-red-600/80 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all z-10"
-                                >
-                                    <Icon name="trash-2" size={16} />
-                                </button>
-                                
-                                <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent">
-                                    <p className="text-xs text-white/80 font-medium">
-                                        {new Date(movie.timestamp).toLocaleDateString()}
+                                        <button 
+                                            onClick={(e) => handleDelete(e, movie.id)} 
+                                            className="absolute top-2 right-2 w-8 h-8 bg-black/50 hover:bg-red-500 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-all scale-90 group-hover:scale-100"
+                                        >
+                                            <Icon name="trash-2" size={14} />
+                                        </button>
+                                        
+                                        <div className="absolute bottom-0 inset-x-0 p-3 bg-gradient-to-t from-black/90 to-transparent">
+                                            <p className="text-[10px] text-white/70 font-medium uppercase tracking-wider">
+                                                {new Date(movie.timestamp).toLocaleDateString()}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            !isProcessing && (
+                                <div className="mt-20 flex flex-col items-center text-center px-8 animate-slide-up">
+                                    <div className="w-24 h-24 bg-white/5 rounded-3xl flex items-center justify-center mb-6 border border-white/5 shadow-2xl">
+                                        <Icon name="film" size={40} className="text-slate-600" />
+                                    </div>
+                                    <h3 className="text-lg font-bold text-white mb-2">Galeria Vazia</h3>
+                                    <p className="text-slate-400 text-sm leading-relaxed max-w-xs">
+                                        Seus filmes aparecerão aqui. <br/>Toque no botão abaixo para começar.
                                     </p>
                                 </div>
-                            </div>
-                        ))}
-                    </div>
-
-                    {/* Empty State */}
-                    {movies.length === 0 && !isProcessing && (
-                        <div className="mt-24 flex flex-col items-center opacity-40 gap-4 px-10 text-center">
-                            <div className="p-6 rounded-full bg-white/5 border border-white/10 animate-bounce">
-                                <Icon name="clapperboard" size={32} />
-                            </div>
-                            <p className="text-sm">Sua galeria de filmes está vazia.<br/>Toque no botão + para criar um novo.</p>
-                        </div>
-                    )}
+                            )
+                        )}
+                    </main>
 
                     {/* Processing Overlay */}
                     {isProcessing && (
-                        <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-8 text-center animate-fade-in">
-                            <Icon name="sparkles" size={48} className={`mb-6 ${theme.accent}`} />
-                            <h3 className="text-2xl font-bold mb-8">Criando Mágica...</h3>
-                            <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-2 relative">
-                                <div className={`h-full ${theme.btn} transition-all duration-100`} style={{ width: `${progress}%` }}></div>
+                        <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center animate-fade-in">
+                            <div className="relative mb-8">
+                                <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 animate-pulse"></div>
+                                <Icon name="clapperboard" size={64} className="text-indigo-400 relative z-10" />
                             </div>
-                            <p className="text-white font-mono text-lg mt-2">{progress}%</p>
-                            <p className="text-white/40 text-xs mt-12 bg-white/5 px-4 py-2 rounded-lg border border-white/5">
-                                Processando seus arquivos. Aguarde...
-                            </p>
+                            <h3 className="text-2xl font-bold text-white mb-2">Renderizando</h3>
+                            <p className="text-slate-400 text-sm mb-8">Criando seu filme em Full HD...</p>
+                            
+                            <div className="w-full max-w-xs h-1.5 bg-slate-800 rounded-full overflow-hidden relative">
+                                <div className="absolute inset-y-0 left-0 bg-indigo-500 transition-all duration-300 shadow-[0_0_10px_rgba(99,102,241,0.5)]" style={{ width: `${progress}%` }}></div>
+                            </div>
+                            <p className="mt-4 font-mono text-indigo-400">{progress}%</p>
                         </div>
                     )}
 
-                    {/* Modais */}
+                    {/* Modals */}
                     {createdBlob && (
-                        <CreationPreviewModal 
+                        <PreviewModal 
                             blob={createdBlob} 
                             onClose={() => setCreatedBlob(null)} 
-                            onSaveToApp={saveCreatedToApp}
-                            onDownload={downloadCreated}
+                            onSave={saveCreated}
+                            onDownload={() => downloadVideo(createdBlob)}
                         />
                     )}
 
                     {viewingMovie && (
-                        <MoviePlayerModal 
-                            movie={viewingMovie} 
-                            onClose={() => setViewingMovie(null)} 
-                        />
+                        <div className="fixed inset-0 z-50 bg-black/95 flex flex-col animate-fade-in">
+                            <button onClick={() => setViewingMovie(null)} className="absolute top-4 right-4 z-50 w-10 h-10 bg-black/50 rounded-full flex items-center justify-center text-white backdrop-blur-md">
+                                <Icon name="x" size={20} />
+                            </button>
+                            <div className="flex-1 flex items-center justify-center p-2">
+                                <video src={viewingMovie.url} controls autoPlay className="max-w-full max-h-full rounded shadow-2xl" />
+                            </div>
+                        </div>
                     )}
 
                     {showThemes && (
-                        <ThemeSelector 
+                        <ThemeModal 
                             current={user.theme} 
                             onClose={() => setShowThemes(false)}
-                            onChange={(newThemeId) => updateTheme(newThemeId)}
+                            onChange={(t) => updateTheme(t)} 
                         />
                     )}
 
-                    {/* Botão de Criação Flutuante */}
-                    <div className="fixed bottom-8 left-0 right-0 px-6 flex justify-center items-center z-40 pointer-events-none">
-                        <label className={`pointer-events-auto h-16 w-16 ${theme.btn} rounded-full flex items-center justify-center text-white shadow-xl shadow-indigo-500/30 cursor-pointer active:scale-90 transition-transform hover:brightness-110 hover:scale-105`}>
+                    {/* FAB */}
+                    <div className="fixed bottom-8 left-0 right-0 flex justify-center z-40 pointer-events-none">
+                        <label className={`pointer-events-auto h-16 w-16 ${theme.btn} rounded-full flex items-center justify-center text-white shadow-2xl shadow-indigo-500/30 cursor-pointer active:scale-90 hover:scale-105 transition-all group border-4 border-black/20`}>
                             <input type="file" multiple accept="image/*,video/*" className="hidden" onChange={handleCreation} />
-                            <Icon name="plus" size={36} />
+                            <Icon name="plus" size={32} className="group-hover:rotate-90 transition-transform duration-300" />
                         </label>
                     </div>
                 </div>
@@ -629,17 +688,23 @@
 
         const App = () => {
             const [user, setUser] = useState(null);
+            const [initializing, setInitializing] = useState(true);
             
             useEffect(() => {
-                // UPDATE: Usando localStorage em vez de sessionStorage para persistência
+                // Check persistent login
                 const session = localStorage.getItem('memoria_session');
-                if (session) setUser(JSON.parse(session));
+                if (session) {
+                    try {
+                        setUser(JSON.parse(session));
+                    } catch(e) { console.error("Session parse error", e); }
+                }
+                setInitializing(false);
                 lucide.createIcons();
             }, []);
 
             const handleLogin = (userData) => {
-                // UPDATE: Usando localStorage
                 localStorage.setItem('memoria_session', JSON.stringify(userData));
+                // Restore theme prefs if exist
                 localStorage.setItem(`memoria_prefs_${userData.email}`, JSON.stringify({ theme: userData.theme }));
                 setUser(userData);
             };
@@ -647,16 +712,16 @@
             const updateTheme = (newTheme) => {
                 const updatedUser = { ...user, theme: newTheme };
                 setUser(updatedUser);
-                // UPDATE: Usando localStorage
                 localStorage.setItem('memoria_session', JSON.stringify(updatedUser));
                 localStorage.setItem(`memoria_prefs_${user.email}`, JSON.stringify({ theme: newTheme }));
             };
 
             const handleLogout = () => {
-                // UPDATE: Removendo de localStorage
                 localStorage.removeItem('memoria_session');
                 setUser(null);
             };
+
+            if (initializing) return <div className="h-screen bg-[#020617]"></div>;
 
             return user ? (
                 <Dashboard user={user} onLogout={handleLogout} updateTheme={updateTheme} />
