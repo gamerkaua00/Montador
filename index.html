@@ -129,16 +129,20 @@
             });
         }
 
-        // --- RENDERER (Correção de Áudio e Performance) ---
+        // --- RENDERER (Alta Qualidade + Ken Burns + Fix Tela Preta) ---
         const exportVideo = async (items, onProgress, onComplete) => {
             const canvas = document.createElement('canvas');
             canvas.width = 720; 
             canvas.height = 1280; 
             const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
             
+            // Qualidade de desenho
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             
-            // CORREÇÃO CRÍTICA DE ÁUDIO: Garantir que o contexto esteja ativo
+            // Garantir contexto de áudio ativo
             if (audioCtx.state === 'suspended') {
                 await audioCtx.resume();
             }
@@ -146,6 +150,7 @@
             const audioDest = audioCtx.createMediaStreamDestination();
             const canvasStream = canvas.captureStream(30);
             
+            // Adicionar trilha de áudio se existir
             if (audioDest.stream.getAudioTracks().length > 0) {
                  canvasStream.addTrack(audioDest.stream.getAudioTracks()[0]);
             }
@@ -158,13 +163,14 @@
             let mimeType = 'video/webm; codecs=vp9';
             if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
 
-            const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 3000000 }); 
+            // BITRATE AUMENTADO: 5 Mbps para melhor qualidade
+            const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 5000000 }); 
             const chunks = [];
             recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
             recorder.onstop = () => onComplete(new Blob(chunks, { type: mimeType }));
             recorder.start();
 
-            const TRANSITION_FRAMES = 10;
+            const TRANSITION_FRAMES = 15; // Transição suave
             
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
@@ -179,9 +185,17 @@
                 if (item.type.startsWith('image')) {
                     const img = new Image();
                     img.src = item.url;
-                    await new Promise(r => img.onload = r);
+                    
+                    // FIX TELA PRETA: Usar decode() para garantir que a imagem está pronta
+                    try {
+                        await img.decode();
+                    } catch (err) {
+                        console.warn("Falha ao decodificar imagem, tentando onload normal", err);
+                        await new Promise(r => img.onload = r);
+                    }
+                    
                     asset = img;
-                    durationFrames = 90; 
+                    durationFrames = 90; // 3 segundos por foto
                     isVideo = false;
                 } else {
                     const vid = document.createElement('video');
@@ -193,63 +207,86 @@
                     await new Promise(resolve => {
                         vid.onloadeddata = () => resolve();
                         vid.onerror = () => resolve();
-                        setTimeout(resolve, 3000); 
+                        // Timeout de segurança aumentado
+                        setTimeout(resolve, 4000); 
                     });
                     
                     asset = vid;
                     durationFrames = Math.ceil(vid.duration * 30);
                     isVideo = true;
 
-                    // Conectar áudio
+                    // Conectar áudio antes do play
                     try {
                         audioSource = audioCtx.createMediaElementSource(vid);
                         audioSource.connect(audioDest);
                     } catch(e) {
-                        console.warn("Audio connection error:", e);
+                        console.warn("Erro ao conectar audio:", e);
                     }
 
                     try { await vid.play(); } catch(e){}
                 }
 
+                // Loop de Frames do item
                 for (let f = 0; f < durationFrames; f++) {
                     ctx.save();
+                    
+                    // Calcular dimensões originais
                     let w = isVideo ? asset.videoWidth : asset.width;
                     let h = isVideo ? asset.videoHeight : asset.height;
 
                     if (w > 0 && h > 0) {
-                        // Background (Fake Blur)
-                        const scaleCover = Math.max(canvas.width / w, canvas.height / h);
+                        // 1. BACKGROUND (Fundo com movimento leve)
+                        // Para não ficar estático, aplicamos um leve zoom também no fundo
+                        const bgZoom = 1 + (f / durationFrames) * 0.05;
+                        
+                        // Calculo de Cover para o fundo
+                        const scaleCover = Math.max(canvas.width / w, canvas.height / h) * bgZoom;
                         const wCover = w * scaleCover;
                         const hCover = h * scaleCover;
                         const xCover = (canvas.width - wCover) / 2;
                         const yCover = (canvas.height - hCover) / 2;
+                        
                         ctx.drawImage(asset, xCover, yCover, wCover, hCover);
                         
-                        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                        // Overlay escuro mais elegante
+                        ctx.fillStyle = 'rgba(0,0,0,0.65)'; 
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                        // Main Content
-                        const scaleContain = Math.min(canvas.width / w, canvas.height / h);
+                        // 2. FOREGROUND (Efeito Ken Burns - Zoom Suave)
+                        // Calcula zoom progressivo (de 1.0 a 1.1)
+                        const zoom = isVideo ? 1 : 1 + (f / durationFrames) * 0.08; 
+                        
+                        // Escala Contain
+                        const scaleContain = Math.min(canvas.width / w, canvas.height / h) * zoom;
                         const wFinal = w * scaleContain;
                         const hFinal = h * scaleContain;
+                        
+                        // Centralizar com base no novo tamanho
                         const xFinal = (canvas.width - wFinal) / 2;
                         const yFinal = (canvas.height - hFinal) / 2;
 
-                        ctx.shadowColor = "rgba(0,0,0,0.5)";
-                        ctx.shadowBlur = 20;
+                        // Sombra projetada
+                        ctx.shadowColor = "rgba(0,0,0,0.6)";
+                        ctx.shadowBlur = 30;
+                        ctx.shadowOffsetX = 0;
+                        ctx.shadowOffsetY = 10;
+
                         ctx.drawImage(asset, xFinal, yFinal, wFinal, hFinal);
                     } else {
-                        ctx.fillStyle = '#000';
+                        // Fallback se dimensões forem 0
+                        ctx.fillStyle = '#1e1b4b'; // Indigo escuro
                         ctx.fillRect(0,0, canvas.width, canvas.height);
                     }
                     ctx.restore();
 
+                    // Transição Suave (Cross-dissolve simulado com fade)
                     if (f < TRANSITION_FRAMES && i > 0) {
+                        // Fade in do preto (simples mas eficaz)
                         ctx.fillStyle = `rgba(0,0,0,${1 - (f/TRANSITION_FRAMES)})`;
                         ctx.fillRect(0,0,canvas.width, canvas.height);
                     }
 
-                    await new Promise(r => setTimeout(r, 33));
+                    await new Promise(r => setTimeout(r, 33)); // 30 FPS target
                 }
                 
                 if(isVideo) {
@@ -262,8 +299,6 @@
             }
 
             recorder.stop();
-            // Evita fechar o audioCtx imediatamente se formos usar de novo, mas como a função acaba, tudo bem.
-            // Porem, fechar pode ser bom pra limpar memoria.
             setTimeout(() => {
                 if(audioCtx.state !== 'closed') audioCtx.close();
             }, 1000);
