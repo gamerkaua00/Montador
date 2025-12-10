@@ -69,9 +69,9 @@
             oled:    { id: 'oled', name: 'OLED Black', bg: 'bg-black', accent: 'text-white', btn: 'bg-zinc-800', gradient: 'from-black to-zinc-900' }
         };
 
-        // --- DATABASE (Updated Store Name for Clean State) ---
+        // --- DATABASE ---
         const DB_NAME = "MemoriaAppDB_V7"; 
-        const STORE_NAME = "final_movies"; // Mudamos para deixar claro que só salva filmes
+        const STORE_NAME = "final_movies"; 
 
         const initDB = () => {
             return new Promise((resolve, reject) => {
@@ -85,7 +85,6 @@
             });
         };
 
-        // Salva o RESULTADO FINAL
         const saveMovieToDB = async (blob, userEmail) => {
             try {
                 const db = await initDB();
@@ -130,7 +129,7 @@
             });
         }
 
-        // --- RENDERER (Mesmo motor otimizado) ---
+        // --- RENDERER (Correção de Áudio e Performance) ---
         const exportVideo = async (items, onProgress, onComplete) => {
             const canvas = document.createElement('canvas');
             canvas.width = 720; 
@@ -138,6 +137,12 @@
             const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
             
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // CORREÇÃO CRÍTICA DE ÁUDIO: Garantir que o contexto esteja ativo
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+
             const audioDest = audioCtx.createMediaStreamDestination();
             const canvasStream = canvas.captureStream(30);
             
@@ -195,10 +200,13 @@
                     durationFrames = Math.ceil(vid.duration * 30);
                     isVideo = true;
 
+                    // Conectar áudio
                     try {
                         audioSource = audioCtx.createMediaElementSource(vid);
                         audioSource.connect(audioDest);
-                    } catch(e) {}
+                    } catch(e) {
+                        console.warn("Audio connection error:", e);
+                    }
 
                     try { await vid.play(); } catch(e){}
                 }
@@ -209,7 +217,7 @@
                     let h = isVideo ? asset.videoHeight : asset.height;
 
                     if (w > 0 && h > 0) {
-                        // Background Blur Fake
+                        // Background (Fake Blur)
                         const scaleCover = Math.max(canvas.width / w, canvas.height / h);
                         const wCover = w * scaleCover;
                         const hCover = h * scaleCover;
@@ -220,7 +228,7 @@
                         ctx.fillStyle = 'rgba(0,0,0,0.7)';
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                        // Main Image
+                        // Main Content
                         const scaleContain = Math.min(canvas.width / w, canvas.height / h);
                         const wFinal = w * scaleContain;
                         const hFinal = h * scaleContain;
@@ -245,14 +253,21 @@
                 }
                 
                 if(isVideo) {
-                    if(audioSource) audioSource.disconnect();
+                    if(audioSource) {
+                        try { audioSource.disconnect(); } catch(e){}
+                    }
                     asset.pause();
                     asset.remove();
                 }
             }
 
             recorder.stop();
-            audioCtx.close(); 
+            // Evita fechar o audioCtx imediatamente se formos usar de novo, mas como a função acaba, tudo bem.
+            // Porem, fechar pode ser bom pra limpar memoria.
+            setTimeout(() => {
+                if(audioCtx.state !== 'closed') audioCtx.close();
+            }, 1000);
+            
             onProgress(100);
         };
 
@@ -263,7 +278,6 @@
             return <i data-lucide={name} width={size} height={size} className={className}></i>;
         };
 
-        // Modal para Visualizar e Salvar o Resultado da Criação
         const CreationPreviewModal = ({ blob, onClose, onSaveToApp, onDownload }) => {
             const url = useMemo(() => URL.createObjectURL(blob), [blob]);
 
@@ -294,7 +308,6 @@
             );
         };
 
-        // Modal para Apenas Assistir filmes salvos
         const MoviePlayerModal = ({ movie, onClose }) => {
             return (
                 <div className="fixed inset-0 z-50 bg-black flex flex-col animate-fade-in">
@@ -426,19 +439,15 @@
                 setIsProcessing(true);
                 setProgress(0);
 
-                // Mapear arquivos para objetos temporários com URL (transientes)
                 const tempItems = files.map(file => ({
                     type: file.type,
                     url: URL.createObjectURL(file)
                 }));
                 
-                // Processar filme imediatamente
                 await exportVideo(tempItems, setProgress, (blob) => {
                     setIsProcessing(false);
                     setCreatedBlob(blob);
-                    e.target.value = ""; // Resetar input
-                    
-                    // Limpar URLs temporários para memória
+                    e.target.value = ""; 
                     tempItems.forEach(i => URL.revokeObjectURL(i.url));
                 });
             };
@@ -447,7 +456,7 @@
                 if(!createdBlob) return;
                 await saveMovieToDB(createdBlob, user.email);
                 await loadMovies();
-                setCreatedBlob(null); // Fecha modal
+                setCreatedBlob(null); 
             };
 
             const downloadCreated = () => {
@@ -587,13 +596,15 @@
             const [user, setUser] = useState(null);
             
             useEffect(() => {
-                const session = sessionStorage.getItem('memoria_session');
+                // UPDATE: Usando localStorage em vez de sessionStorage para persistência
+                const session = localStorage.getItem('memoria_session');
                 if (session) setUser(JSON.parse(session));
                 lucide.createIcons();
             }, []);
 
             const handleLogin = (userData) => {
-                sessionStorage.setItem('memoria_session', JSON.stringify(userData));
+                // UPDATE: Usando localStorage
+                localStorage.setItem('memoria_session', JSON.stringify(userData));
                 localStorage.setItem(`memoria_prefs_${userData.email}`, JSON.stringify({ theme: userData.theme }));
                 setUser(userData);
             };
@@ -601,12 +612,14 @@
             const updateTheme = (newTheme) => {
                 const updatedUser = { ...user, theme: newTheme };
                 setUser(updatedUser);
-                sessionStorage.setItem('memoria_session', JSON.stringify(updatedUser));
+                // UPDATE: Usando localStorage
+                localStorage.setItem('memoria_session', JSON.stringify(updatedUser));
                 localStorage.setItem(`memoria_prefs_${user.email}`, JSON.stringify({ theme: newTheme }));
             };
 
             const handleLogout = () => {
-                sessionStorage.removeItem('memoria_session');
+                // UPDATE: Removendo de localStorage
+                localStorage.removeItem('memoria_session');
                 setUser(null);
             };
 
